@@ -1,0 +1,66 @@
+package com.aws.lab;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.sagemakerruntime.SageMakerRuntimeClient;
+import software.amazon.awssdk.services.sagemakerruntime.model.InvokeEndpointRequest;
+import software.amazon.awssdk.services.sagemakerruntime.model.InvokeEndpointResponse;
+
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+
+public class SageMakerRerankerService {
+
+    private final SageMakerRuntimeClient client;
+    private final String endpointName;
+    private final ObjectMapper mapper;
+
+    public SageMakerRerankerService(String endpointName, Region region) {
+        this.endpointName = endpointName;
+        this.client = SageMakerRuntimeClient.builder()
+                .region(region)
+                .build();
+        this.mapper = new ObjectMapper();
+    }
+
+    public record ScoredDocument(String text, double score) {}
+
+    public List<ScoredDocument> rerank(String query, List<String> passages) {
+        try {
+            List<Map<String, Object>> inputs = new ArrayList<>();
+            for (String passage : passages) {
+                inputs.add(Map.of("text", query, "text_pair", passage));
+            }
+            String payloadJson = mapper.writeValueAsString(Map.of("inputs", inputs));
+
+            InvokeEndpointRequest request = InvokeEndpointRequest.builder()
+                    .endpointName(endpointName)
+                    .contentType("application/json")
+                    .body(SdkBytes.fromString(payloadJson, StandardCharsets.UTF_8))
+                    .build();
+
+            InvokeEndpointResponse response = client.invokeEndpoint(request);
+            String responseBody = response.body().asString(StandardCharsets.UTF_8);
+
+            JsonNode results = mapper.readTree(responseBody);
+            List<ScoredDocument> scored = new ArrayList<>();
+
+            for (int i = 0; i < results.size(); i++) {
+                double score = results.get(i).path("score").asDouble();
+                scored.add(new ScoredDocument(passages.get(i), score));
+            }
+
+            scored.sort(Comparator.comparingDouble(ScoredDocument::score).reversed());
+            return scored;
+
+        } catch (Exception e) {
+            System.err.println("[SageMaker Reranker] Scoring failed, falling back: " + e.getMessage());
+            return passages.stream().map(p -> new ScoredDocument(p, 0.0)).toList();
+        }
+    }
+}

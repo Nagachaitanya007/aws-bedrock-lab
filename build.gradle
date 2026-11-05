@@ -1,0 +1,34 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.aws.lab'
+version = '1.0-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation platform('software.amazon.awssdk:bom:2.29.15')
+    implementation 'software.amazon.awssdk:bedrockruntime'
+    implementation 'software.amazon.awssdk:sagemakerruntime'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+    implementation 'redis.clients:jedis:5.2.0'
+    implementation 'org.slf4j:slf4j-simple:2.0.16'
+}
+
+application {
+    mainClass = 'com.aws.lab.BedrockRedisChat'
+}
+
+run {
+    standardInput = System.in
+}
