@@ -182,3 +182,123 @@ resource "aws_sagemaker_endpoint" "reranker_endpoint" {
     Project = "Bedrock-Lab"
   }
 }
+
+# --- RDS PostgreSQL (pgvector) Subnet Group ---
+resource "aws_db_subnet_group" "rds_subnets" {
+  name       = "bedrock-lab-rds-subnet-group"
+  subnet_ids = data.aws_subnets.default.ids
+
+  tags = {
+    Name = "bedrock-lab-rds-subnets"
+  }
+}
+
+# --- RDS Security Group ---
+resource "aws_security_group" "rds_sg" {
+  name        = "bedrock-lab-rds-sg"
+  description = "Allow inbound PostgreSQL traffic from Bastion"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description     = "PostgreSQL from Tunnel Host"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.redis_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "bedrock-lab-rds-sg"
+  }
+}
+
+# --- RDS PostgreSQL Instance ---
+resource "aws_db_instance" "postgres" {
+  identifier             = "bedrock-lab-postgres"
+  allocated_storage      = 20
+  max_allocated_storage  = 20
+  storage_type           = "gp3"
+  engine                 = "postgres"
+  engine_version         = "16.3"
+  instance_class         = "db.t4g.micro"
+  db_name                = "aegis_rag"
+  username               = "rag_admin"
+  password               = "AegisRagSecure2026!"
+  db_subnet_group_name   = aws_db_subnet_group.rds_subnets.name
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+  skip_final_snapshot    = true
+  publicly_accessible    = false
+
+  tags = {
+    Name = "bedrock-lab-postgres"
+  }
+}
+
+# --- S3 Storage for Raw Docs & Canonical IR ---
+resource "random_id" "bucket_suffix" {
+  byte_length = 4
+}
+
+resource "aws_s3_bucket" "aegis_docs" {
+  bucket        = "aegis-rag-docs-${random_id.bucket_suffix.hex}"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "aegis_docs_crypto" {
+  bucket = aws_s3_bucket.aegis_docs.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# --- Queue 1: Parsing Pipeline (Raw -> JSON IR) ---
+resource "aws_sqs_queue" "parsing_dlq" {
+  name                      = "aegis-parsing-dlq"
+  message_retention_seconds = 1209600 # 14 days
+}
+
+resource "aws_sqs_queue" "parsing_queue" {
+  name                       = "aegis-parsing-queue"
+  visibility_timeout_seconds = 300 # 5 minutes for heavy OCR/parsing
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.parsing_dlq.arn
+    maxReceiveCount     = 3
+  })
+}
+
+# --- Queue 2: Indexing Pipeline (Claim-Check JSON IR -> Titan v2 -> pgvector) ---
+resource "aws_sqs_queue" "indexing_dlq" {
+  name                      = "aegis-indexing-dlq"
+  message_retention_seconds = 1209600 # 14 days
+}
+
+resource "aws_sqs_queue" "indexing_queue" {
+  name                       = "aegis-indexing-queue"
+  visibility_timeout_seconds = 180 # 3 minutes for embedding & vector batch inserts
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.indexing_dlq.arn
+    maxReceiveCount     = 3
+  })
+}
+
+# --- Outputs for Consumer / Producer Configuration ---
+output "s3_bucket_name" {
+  value = aws_s3_bucket.aegis_docs.id
+}
+
+output "parsing_queue_url" {
+  value = aws_sqs_queue.parsing_queue.url
+}
+
+output "indexing_queue_url" {
+  value = aws_sqs_queue.indexing_queue.url
+}

@@ -17,3 +17,13 @@ output "sagemaker_endpoint_name" {
   description = "Name of the SageMaker Reranker Endpoint"
   value       = aws_sagemaker_endpoint.reranker_endpoint.name
 }
+
+output "rds_endpoint" {
+  description = "Private endpoint of the RDS PostgreSQL instance"
+  value       = aws_db_instance.postgres.address
+}
+
+output "rds_port" {
+  description = "PostgreSQL port"
+  value       = aws_db_instance.postgres.port
+}

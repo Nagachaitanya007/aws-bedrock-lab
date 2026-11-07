@@ -17,16 +17,27 @@ repositories {
 }
 
 dependencies {
-    implementation platform('software.amazon.awssdk:bom:2.29.15')
+    // AWS SDK v2
+    implementation platform('software.amazon.awssdk:bom:2.29.1')
     implementation 'software.amazon.awssdk:bedrockruntime'
     implementation 'software.amazon.awssdk:sagemakerruntime'
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
-    implementation 'redis.clients:jedis:5.2.0'
-    implementation 'org.slf4j:slf4j-simple:2.0.16'
+    implementation 'software.amazon.awssdk:s3'
+    implementation 'software.amazon.awssdk:sqs'
+
+    // PostgreSQL, pgvector, and Redis
+    implementation 'org.postgresql:postgresql:42.7.2'
+    implementation 'com.pgvector:pgvector:0.1.6'
+    implementation 'redis.clients:jedis:5.1.0'
+
+    // JSON Processing
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.1'
+
+    // Logging
+    implementation 'org.slf4j:slf4j-simple:2.0.12'
 }
 
 application {
-    mainClass = 'com.aws.lab.BedrockRedisChat'
+    mainClass = project.findProperty('mainClass') ?: 'com.aws.lab.BedrockRedisChat'
 }
 
 run {

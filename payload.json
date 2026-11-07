@@ -1,0 +1,1 @@
+{"inputs": [{"text": "What queue service is used?", "text_pair": "Amazon SQS handles message queuing with dead-letter queue support."}, {"text": "What queue service is used?", "text_pair": "Redis is used as an in-memory session cache."}]}
