@@ -9,11 +9,24 @@ terraform {
       source  = "hashicorp/time"
       version = "~> 0.9"
     }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.4"
+    }
   }
 }
 
 provider "aws" {
   region = var.aws_region
+}
+
+# --- Operator IP Detection (Zero-Trust Bastion Ingress) ---
+data "http" "operator_ip" {
+  url = "https://checkip.amazonaws.com"
+}
+
+locals {
+  operator_ssh_cidr = var.allowed_ssh_cidr != null ? var.allowed_ssh_cidr : "${chomp(data.http.operator_ip.response_body)}/32"
 }
 
 # --- VPC & Subnets ---
@@ -47,11 +60,11 @@ resource "aws_security_group" "redis_sg" {
   }
 
   ingress {
-    description = "Allow SSH for Tunneling"
+    description = "Allow SSH for Tunneling strictly from Operator IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [local.operator_ssh_cidr]
   }
 
   egress {
@@ -138,7 +151,6 @@ resource "aws_sagemaker_model" "reranker_model" {
   depends_on         = [time_sleep.wait_for_iam]
 
   primary_container {
-    # Official Hugging Face PyTorch CPU Inference Container in us-east-1
     image = "763104351884.dkr.ecr.us-east-1.amazonaws.com/huggingface-pytorch-inference:2.6.0-transformers4.51.3-cpu-py312-ubuntu22.04"
     mode  = "SingleModel"
 
@@ -230,7 +242,8 @@ resource "aws_db_instance" "postgres" {
   instance_class         = "db.t4g.micro"
   db_name                = "doclab_rag"
   username               = "rag_admin"
-  password               = "AegisRagSecure2026!"
+  password               = var.db_password
+  apply_immediately      = true
   db_subnet_group_name   = aws_db_subnet_group.rds_subnets.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
   skip_final_snapshot    = true
@@ -301,4 +314,9 @@ output "parsing_queue_url" {
 
 output "indexing_queue_url" {
   value = aws_sqs_queue.indexing_queue.url
+}
+
+output "operator_ssh_cidr" {
+  description = "Allowed SSH CIDR for bastion ingress"
+  value       = local.operator_ssh_cidr
 }

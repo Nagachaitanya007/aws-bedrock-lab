@@ -10,6 +10,26 @@ $TerraformDir = "E:\aws-bedrock-lab\terraform"
 $ProjectDir = "E:\aws-bedrock-lab"
 $KeyPath = "$ProjectDir\tunnel_key"
 
+function Load-EnvFile {
+    $envPath = Join-Path $ProjectDir ".env"
+    if (Test-Path $envPath) {
+        Get-Content $envPath | Where-Object {
+            $_ -match '^[^#=]+=.+$'
+        } | ForEach-Object {
+            $parts = $_.Split('=', 2)
+            $varName = $parts[0].Trim()
+            $varVal = $parts[1].Trim()
+            [System.Environment]::SetEnvironmentVariable($varName, $varVal, 'Process')
+        }
+        if ($env:DOCLAB_DB_PASS) {
+            $env:TF_VAR_db_password = $env:DOCLAB_DB_PASS
+        } elseif ($env:AEGIS_DB_PASS) {
+            $env:TF_VAR_db_password = $env:AEGIS_DB_PASS
+        }
+        Write-Host ">>> Loaded environment variables from .env" -ForegroundColor DarkGray
+    }
+}
+
 function Test-PortOpen([string]$HostName, [int]$Port) {
     try {
         $client = New-Object System.Net.Sockets.TcpClient
@@ -44,14 +64,15 @@ function Get-TfOutputs {
         $json = $raw | ConvertFrom-Json
 
         return @{
-            InstanceId    = $json.instance_id.value
-            PublicIp      = $json.public_ip.value
-            RdsHost       = $json.rds_endpoint.value
-            RdsPort       = if ($json.rds_port) { $json.rds_port.value } else { 5432 }
-            RedisHost     = $json.redis_endpoint.value
-            S3Bucket      = if ($json.s3_bucket_name) { $json.s3_bucket_name.value } else { "" }
-            ParsingQueue  = if ($json.parsing_queue_url) { $json.parsing_queue_url.value } else { "" }
-            IndexingQueue = if ($json.indexing_queue_url) { $json.indexing_queue_url.value } else { "" }
+            InstanceId      = $json.instance_id.value
+            PublicIp        = $json.public_ip.value
+            RdsHost         = $json.rds_endpoint.value
+            RdsPort         = if ($json.rds_port) { $json.rds_port.value } else { 5432 }
+            RedisHost       = $json.redis_endpoint.value
+            S3Bucket        = if ($json.s3_bucket_name) { $json.s3_bucket_name.value } else { "" }
+            ParsingQueue    = if ($json.parsing_queue_url) { $json.parsing_queue_url.value } else { "" }
+            IndexingQueue   = if ($json.indexing_queue_url) { $json.indexing_queue_url.value } else { "" }
+            OperatorSshCidr = if ($json.operator_ssh_cidr) { $json.operator_ssh_cidr.value } else { "" }
         }
     } finally {
         Pop-Location
@@ -106,6 +127,9 @@ function Stop-SshTunnel {
     Start-Sleep -Seconds 1
     Write-Host ">>> SSH tunnel processes terminated." -ForegroundColor Green
 }
+
+# Always load configuration and export TF_VAR_db_password
+Load-EnvFile
 
 switch ($Action) {
     'up' {
@@ -170,6 +194,7 @@ switch ($Action) {
             Write-Host "`n--- Active Cloud Resources ---" -ForegroundColor Cyan
             Write-Host "Bastion Instance ID : $($tf.InstanceId)"
             Write-Host "Bastion Public IP   : $($tf.PublicIp)"
+            Write-Host "Allowed SSH Ingress : $($tf.OperatorSshCidr)"
             Write-Host "RDS Endpoint        : $($tf.RdsHost):$($tf.RdsPort)"
             Write-Host "Redis Endpoint      : $($tf.RedisHost)"
             if ($tf.S3Bucket)     { Write-Host "S3 Bucket           : $($tf.S3Bucket)" }
