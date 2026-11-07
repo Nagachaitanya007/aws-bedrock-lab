@@ -26,7 +26,7 @@ public class SemanticIndexerWorker {
     private static final Region REGION = Region.US_EAST_1;
     private static final String INDEXING_QUEUE_URL = System.getenv().getOrDefault(
             "INDEXING_QUEUE_URL",
-            "https://sqs.us-east-1.amazonaws.com/564956048142/aegis-indexing-queue"
+            "https://sqs.us-east-1.amazonaws.com/564956048142/doclab-indexing-queue"
     );
     private static final ObjectMapper MAPPER = new ObjectMapper();
 

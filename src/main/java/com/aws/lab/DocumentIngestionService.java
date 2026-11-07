@@ -12,9 +12,9 @@ import java.util.Map;
 
 public class DocumentIngestionService {
 
-    private static final String DB_URL = "jdbc:postgresql://127.0.0.1:5432/aegis_rag";
-    private static final String DB_USER = "rag_admin";
-    private static final String DB_PASS = "AegisRagSecure2026!";
+    private static final String DB_URL = DbConfig.getUrl();
+    private static final String DB_USER = DbConfig.getUser();
+    private static final String DB_PASS = DbConfig.getPassword();
 
     public record IngestChunk(
             String documentTitle,

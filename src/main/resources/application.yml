@@ -1,0 +1,27 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: doclab-platform
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+doclab:
+  aws:
+    region: ${AWS_REGION:us-east-1}
+  s3:
+    bucket-name: ${S3_BUCKET_NAME:doclab-docs-19530061}
+  sqs:
+    parsing-queue-url: ${PARSING_QUEUE_URL:https://sqs.us-east-1.amazonaws.com/564956048142/doclab-parsing-queue}
+    indexing-queue-url: ${INDEXING_QUEUE_URL:https://sqs.us-east-1.amazonaws.com/564956048142/doclab-indexing-queue}
+  bedrock:
+    model-id: ${BEDROCK_MODEL_ID:amazon.nova-micro-v1:0}
+    embedding-model-id: ${BEDROCK_EMBEDDING_MODEL_ID:amazon.titan-embed-text-v2:0}
+
+logging:
+  level:
+    root: INFO
+    com.aws.lab: DEBUG

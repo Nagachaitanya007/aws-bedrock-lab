@@ -13,7 +13,6 @@ public class DbConfig {
 
     private static Map<String, String> loadDotEnv() {
         Map<String, String> map = new HashMap<>();
-        // Checks project root or current working directory for .env
         File envFile = new File(".env");
         if (!envFile.exists()) {
             envFile = new File("E:\\aws-bedrock-lab\\.env");
@@ -29,7 +28,6 @@ public class DbConfig {
                     if (eqIdx != -1) {
                         String key = line.substring(0, eqIdx).trim();
                         String val = line.substring(eqIdx + 1).trim();
-                        // Strip quotes if present
                         if ((val.startsWith("\"") && val.endsWith("\"")) || (val.startsWith("'") && val.endsWith("'"))) {
                             val = val.substring(1, val.length() - 1);
                         }
@@ -52,23 +50,35 @@ public class DbConfig {
     }
 
     public static String getUrl() {
-        String url = getVal("AEGIS_DB_URL");
-        return (url != null && !url.isBlank()) ? url : "jdbc:postgresql://127.0.0.1:5432/aegis_rag";
+        String url = getVal("DOCLAB_DB_URL");
+        if (url == null || url.isBlank()) {
+            url = getVal("AEGIS_DB_URL");
+        }
+        return (url != null && !url.isBlank()) ? url : "jdbc:postgresql://127.0.0.1:5432/doclab_rag";
     }
 
     public static String getUser() {
-        String user = getVal("AEGIS_DB_USER");
+        String user = getVal("DOCLAB_DB_USER");
+        if (user == null || user.isBlank()) {
+            user = getVal("AEGIS_DB_USER");
+        }
         if (user == null || user.isBlank()) {
             user = getVal("DB_USER");
         }
         if (user == null || user.isBlank()) {
-            throw new IllegalStateException("Missing environment variable: AEGIS_DB_USER (or DB_USER) in environment or .env");
+            throw new IllegalStateException("Missing environment variable: DOCLAB_DB_USER (or AEGIS_DB_USER / DB_USER) in environment or .env");
         }
         return user;
     }
 
     public static String getPassword() {
-        String pass = getVal("AEGIS_DB_PASS");
+        String pass = getVal("DOCLAB_DB_PASS");
+        if (pass == null || pass.isBlank()) {
+            pass = getVal("DOCLAB_DB_PASSWORD");
+        }
+        if (pass == null || pass.isBlank()) {
+            pass = getVal("AEGIS_DB_PASS");
+        }
         if (pass == null || pass.isBlank()) {
             pass = getVal("AEGIS_DB_PASSWORD");
         }
@@ -76,18 +86,24 @@ public class DbConfig {
             pass = getVal("DB_PASSWORD");
         }
         if (pass == null || pass.isBlank()) {
-            throw new IllegalStateException("Missing environment variable: AEGIS_DB_PASS (or AEGIS_DB_PASSWORD) in environment or .env");
+            throw new IllegalStateException("Missing environment variable: DOCLAB_DB_PASS (or AEGIS_DB_PASS / DB_PASSWORD) in environment or .env");
         }
         return pass;
     }
 
     public static String getRedisHost() {
-        String host = getVal("AEGIS_REDIS_HOST");
+        String host = getVal("DOCLAB_REDIS_HOST");
+        if (host == null || host.isBlank()) {
+            host = getVal("AEGIS_REDIS_HOST");
+        }
         return (host != null && !host.isBlank()) ? host : "127.0.0.1";
     }
 
     public static int getRedisPort() {
-        String port = getVal("AEGIS_REDIS_PORT");
+        String port = getVal("DOCLAB_REDIS_PORT");
+        if (port == null || port.isBlank()) {
+            port = getVal("AEGIS_REDIS_PORT");
+        }
         return (port != null && !port.isBlank()) ? Integer.parseInt(port) : 6379;
     }
 }

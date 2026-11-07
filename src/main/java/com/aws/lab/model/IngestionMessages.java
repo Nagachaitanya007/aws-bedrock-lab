@@ -5,7 +5,7 @@ import java.util.Map;
 
 public class IngestionMessages {
 
-    // Emitted to aegis-parsing-queue
+    // Emitted to doclab-parsing-queue
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ParsingTaskMessage(
             String documentId,
@@ -16,7 +16,7 @@ public class IngestionMessages {
             Map<String, Object> metadata
     ) {}
 
-    // Emitted to aegis-indexing-queue (Claim-Check pattern)
+    // Emitted to doclab-indexing-queue (Claim-Check pattern)
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record IndexingTaskMessage(
             String documentId,

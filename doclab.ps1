@@ -1,9 +1,8 @@
-
 [CmdletBinding()]
 param (
     [Parameter(Position = 0)]
-    [ValidateSet('pipeline', 'console', 'status')]
-    [string]$Action = 'console'
+    [ValidateSet('server', 'pipeline', 'console', 'status')]
+    [string]$Action = 'server'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +29,7 @@ function Load-EnvFile {
         Write-Host ">>> Loaded environment variables from .env" -ForegroundColor DarkGray
     }
     else {
-        Write-Warning ".env file not found at $envPath. Ensure AEGIS_DB_USER and AEGIS_DB_PASS are set."
+        Write-Warning ".env file not found at $envPath. Ensure DOCLAB_DB_USER (or AEGIS_DB_USER) and password are set."
     }
 }
 
@@ -72,6 +71,12 @@ Push-Location $ProjectDir
 
 try {
     switch ($Action) {
+        'server' {
+            Ensure-TunnelActive
+            Write-Host "`n>>> Starting DocLab Spring Boot REST Platform on http://localhost:8080..." -ForegroundColor Green
+            .\gradlew.bat bootRun --console=plain
+        }
+
         'pipeline' {
             Ensure-TunnelActive
 
@@ -89,7 +94,7 @@ try {
 
         'console' {
             Ensure-TunnelActive
-            .\gradlew.bat run "-PmainClass=com.aws.lab.AegisRagEngine" --console=plain -q
+            .\gradlew.bat run "-PmainClass=com.aws.lab.DocLabEngine" --console=plain -q
         }
 
         'status' {

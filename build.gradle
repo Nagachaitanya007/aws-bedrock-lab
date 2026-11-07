@@ -1,6 +1,8 @@
 plugins {
     id 'java'
     id 'application'
+    id 'org.springframework.boot' version '3.3.5'
+    id 'io.spring.dependency-management' version '1.1.6'
 }
 
 group = 'com.aws.lab'
@@ -17,6 +19,10 @@ repositories {
 }
 
 dependencies {
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
     // AWS SDK v2
     implementation platform('software.amazon.awssdk:bom:2.29.1')
     implementation 'software.amazon.awssdk:bedrockruntime'
@@ -30,14 +36,16 @@ dependencies {
     implementation 'redis.clients:jedis:5.1.0'
 
     // JSON Processing
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.1'
-
-    // Logging
-    implementation 'org.slf4j:slf4j-simple:2.0.12'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 }
 
 application {
-    mainClass = project.findProperty('mainClass') ?: 'com.aws.lab.BedrockRedisChat'
+    mainClass = project.findProperty('mainClass') ?: 'com.aws.lab.DocLabApplication'
+}
+
+bootRun {
+    standardInput = System.in
 }
 
 run {

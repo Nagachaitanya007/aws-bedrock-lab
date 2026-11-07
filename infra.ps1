@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param (
     [Parameter(Position=0, Mandatory=$true)]
     [ValidateSet('up', 'down', 'status', 'tunnel-start', 'tunnel-stop')]
@@ -110,7 +110,7 @@ function Stop-SshTunnel {
 switch ($Action) {
     'up' {
         Write-Host "`n==========================================" -ForegroundColor Cyan
-        Write-Host "   PROVISIONING AEGIS INFRASTRUCTURE" -ForegroundColor Cyan
+        Write-Host "   PROVISIONING DOCLAB INFRASTRUCTURE" -ForegroundColor Cyan
         Write-Host "==========================================" -ForegroundColor Cyan
 
         Push-Location $TerraformDir
@@ -140,7 +140,7 @@ switch ($Action) {
 
     'down' {
         Write-Host "`n==========================================" -ForegroundColor Yellow
-        Write-Host "   DECOMMISSIONING AEGIS INFRASTRUCTURE" -ForegroundColor Yellow
+        Write-Host "   DECOMMISSIONING DOCLAB INFRASTRUCTURE" -ForegroundColor Yellow
         Write-Host "==========================================" -ForegroundColor Yellow
 
         Stop-SshTunnel

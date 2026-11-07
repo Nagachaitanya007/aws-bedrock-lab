@@ -16,8 +16,8 @@ import java.nio.file.Files;
 public class DocumentProducer {
 
     private static final Region REGION = Region.US_EAST_1;
-    private static final String S3_BUCKET = System.getenv().getOrDefault("S3_BUCKET_NAME", "aegis-rag-docs-c3fe55a3");
-    private static final String PARSING_QUEUE_URL = System.getenv().getOrDefault("PARSING_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/564956048142/aegis-parsing-queue");
+    private static final String S3_BUCKET = System.getenv().getOrDefault("S3_BUCKET_NAME", "doclab-docs-c3fe55a3");
+    private static final String PARSING_QUEUE_URL = System.getenv().getOrDefault("PARSING_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/564956048142/doclab-parsing-queue");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public static void main(String[] args) throws Exception {

@@ -228,7 +228,7 @@ resource "aws_db_instance" "postgres" {
   engine                 = "postgres"
   engine_version         = "16.3"
   instance_class         = "db.t4g.micro"
-  db_name                = "aegis_rag"
+  db_name                = "doclab_rag"
   username               = "rag_admin"
   password               = "AegisRagSecure2026!"
   db_subnet_group_name   = aws_db_subnet_group.rds_subnets.name
@@ -246,13 +246,13 @@ resource "random_id" "bucket_suffix" {
   byte_length = 4
 }
 
-resource "aws_s3_bucket" "aegis_docs" {
-  bucket        = "aegis-rag-docs-${random_id.bucket_suffix.hex}"
+resource "aws_s3_bucket" "doclab_docs" {
+  bucket        = "doclab-docs-${random_id.bucket_suffix.hex}"
   force_destroy = true
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "aegis_docs_crypto" {
-  bucket = aws_s3_bucket.aegis_docs.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "doclab_docs_crypto" {
+  bucket = aws_s3_bucket.doclab_docs.id
   rule {
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
@@ -262,12 +262,12 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "aegis_docs_crypto
 
 # --- Queue 1: Parsing Pipeline (Raw -> JSON IR) ---
 resource "aws_sqs_queue" "parsing_dlq" {
-  name                      = "aegis-parsing-dlq"
+  name                      = "doclab-parsing-dlq"
   message_retention_seconds = 1209600 # 14 days
 }
 
 resource "aws_sqs_queue" "parsing_queue" {
-  name                       = "aegis-parsing-queue"
+  name                       = "doclab-parsing-queue"
   visibility_timeout_seconds = 300 # 5 minutes for heavy OCR/parsing
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.parsing_dlq.arn
@@ -277,12 +277,12 @@ resource "aws_sqs_queue" "parsing_queue" {
 
 # --- Queue 2: Indexing Pipeline (Claim-Check JSON IR -> Titan v2 -> pgvector) ---
 resource "aws_sqs_queue" "indexing_dlq" {
-  name                      = "aegis-indexing-dlq"
+  name                      = "doclab-indexing-dlq"
   message_retention_seconds = 1209600 # 14 days
 }
 
 resource "aws_sqs_queue" "indexing_queue" {
-  name                       = "aegis-indexing-queue"
+  name                       = "doclab-indexing-queue"
   visibility_timeout_seconds = 180 # 3 minutes for embedding & vector batch inserts
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.indexing_dlq.arn
@@ -292,7 +292,7 @@ resource "aws_sqs_queue" "indexing_queue" {
 
 # --- Outputs for Consumer / Producer Configuration ---
 output "s3_bucket_name" {
-  value = aws_s3_bucket.aegis_docs.id
+  value = aws_s3_bucket.doclab_docs.id
 }
 
 output "parsing_queue_url" {

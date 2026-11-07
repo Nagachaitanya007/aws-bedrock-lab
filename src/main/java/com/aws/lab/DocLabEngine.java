@@ -12,7 +12,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.*;
 
-public class AegisRagEngine {
+public class DocLabEngine {
 
     private static final String MODEL_ID = "amazon.nova-micro-v1:0";
     private static final int REDIS_TIMEOUT_MS = 5000;
@@ -29,7 +29,7 @@ public class AegisRagEngine {
     private final HybridRetrievalService retrievalService;
     private final JedisPool jedisPool;
 
-    public AegisRagEngine(Region region) {
+    public DocLabEngine(Region region) {
         this.bedrockClient = BedrockRuntimeClient.builder().region(region).build();
         this.retrievalService = new HybridRetrievalService(region);
 
@@ -104,7 +104,7 @@ public class AegisRagEngine {
                 .build());
 
         SystemContentBlock systemPrompt = SystemContentBlock.fromText(
-                "You are Aegis RAG, an incident and architecture intelligence assistant. " +
+                "You are DocLab, an enterprise architecture and knowledge intelligence assistant. " +
                         "Provide direct, concise, technically rigorous answers citing section headers."
         );
 
@@ -202,14 +202,14 @@ public class AegisRagEngine {
     }
 
     public static void main(String[] args) {
-        System.out.println(CYAN + ">>> Initializing Aegis RAG Interactive Engine..." + RESET);
-        AegisRagEngine engine = new AegisRagEngine(Region.US_EAST_1);
+        System.out.println(CYAN + ">>> Initializing DocLab Interactive Engine..." + RESET);
+        DocLabEngine engine = new DocLabEngine(Region.US_EAST_1);
 
         String testSession = "engineer-session-001";
         Scanner scanner = new Scanner(System.in);
 
         System.out.println("\n" + BOLD + "==========================================================" + RESET);
-        System.out.println(BOLD + " Aegis RAG Intelligence Console " + RESET + "(Type 'exit' to quit)");
+        System.out.println(BOLD + " DocLab Intelligence Console " + RESET + "(Type 'exit' to quit)");
         System.out.println(BOLD + "==========================================================" + RESET);
 
         while (true) {
