@@ -20,6 +20,10 @@ doclab:
   bedrock:
     model-id: ${BEDROCK_MODEL_ID:amazon.nova-micro-v1:0}
     embedding-model-id: ${BEDROCK_EMBEDDING_MODEL_ID:amazon.titan-embed-text-v2:0}
+  sagemaker:
+    reranker-endpoint: ${SAGEMAKER_RERANKER_ENDPOINT:bge-reranker-endpoint}
+    enabled: ${DOCLAB_RERANKER_ENABLED:true}
+    candidate-count: ${DOCLAB_RERANKER_CANDIDATES:15}
   workers:
     auto-enabled: ${DOCLAB_AUTO_WORKERS:true}
     poll-interval-ms: ${DOCLAB_WORKER_POLL_INTERVAL_MS:3000}

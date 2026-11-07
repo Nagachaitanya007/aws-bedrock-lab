@@ -1,6 +1,5 @@
 package com.aws.lab;
 
-import com.aws.lab.DbConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -40,6 +39,7 @@ public class HybridRetrievalService {
         public double denseRankScore;
         public double sparseRankScore;
         public double rrfScore;
+        public double rerankerScore;
 
         public ScoredChunk(int id, String documentTitle, String sectionTitle, String content) {
             this.id = id;
@@ -47,25 +47,28 @@ public class HybridRetrievalService {
             this.sectionTitle = sectionTitle;
             this.content = content;
         }
+
+        public String getFullContextText() {
+            return String.format("Document: %s | Section: %s\n%s", documentTitle, sectionTitle, content);
+        }
     }
 
-    // Constructor accepting Region
     public HybridRetrievalService(Region region) {
         this.region = region;
         this.bedrock = BedrockRuntimeClient.builder().region(region).build();
     }
 
-    // Default constructor fallback
     public HybridRetrievalService() {
         this(Region.US_EAST_1);
     }
 
-    // 2-argument overload using default engineering AuthContext
     public List<ScoredChunk> retrieve(String queryText, int topK) throws Exception {
         return retrieve(queryText, topK, AuthContext.defaultEngineering());
     }
 
-    // 3-argument method enforcing P0 governance and tenant isolation
+    /**
+     * Hybrid Reciprocal Rank Fusion (Dense Vector + BM25 Lexical) with Governance.
+     */
     public List<ScoredChunk> retrieve(String queryText, int topK, AuthContext auth) throws Exception {
         String queryEmbedding = generateEmbedding(this.bedrock, queryText);
 
@@ -93,7 +96,7 @@ public class HybridRetrievalService {
                 ps.setString(2, auth.tenantId());
                 ps.setArray(3, rolesArray);
                 ps.setString(4, queryEmbedding);
-                ps.setInt(5, topK * 2);
+                ps.setInt(5, Math.max(topK * 2, 20));
 
                 try (ResultSet rs = ps.executeQuery()) {
                     int rank = 1;
@@ -131,7 +134,7 @@ public class HybridRetrievalService {
                 ps.setString(2, auth.tenantId());
                 ps.setArray(3, rolesArray);
                 ps.setString(4, queryText);
-                ps.setInt(5, topK * 2);
+                ps.setInt(5, Math.max(topK * 2, 20));
 
                 try (ResultSet rs = ps.executeQuery()) {
                     int rank = 1;
@@ -162,7 +165,93 @@ public class HybridRetrievalService {
         return fusedResults.subList(0, Math.min(topK, fusedResults.size()));
     }
 
-    private String generateEmbedding(BedrockRuntimeClient bedrock, String text) throws Exception {
+    /**
+     * Pure Dense Vector Search (for benchmark comparison).
+     */
+    public List<ScoredChunk> retrieveDense(String queryText, int topK, AuthContext auth) throws Exception {
+        String queryEmbedding = generateEmbedding(this.bedrock, queryText);
+        List<ScoredChunk> results = new ArrayList<>();
+
+        try (Connection conn = DriverManager.getConnection(DbConfig.getUrl(), DbConfig.getUser(), DbConfig.getPassword())) {
+            Array rolesArray = conn.createArrayOf("text", auth.userRoles().toArray(new String[0]));
+            String sql = """
+                SELECT c.id, c.document_title, c.section_title, c.content,
+                       (1 - (c.embedding <=> ?::vector)) AS similarity
+                  FROM document_chunks c
+                  JOIN documents d ON c.document_id = d.document_id AND c.document_version = d.version
+                 WHERE d.lifecycle_status = 'ACTIVE'
+                   AND d.tenant_id = ?
+                   AND d.allowed_roles && ?::text[]
+                 ORDER BY c.embedding <=> ?::vector
+                 LIMIT ?;
+            """;
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, queryEmbedding);
+                ps.setString(2, auth.tenantId());
+                ps.setArray(3, rolesArray);
+                ps.setString(4, queryEmbedding);
+                ps.setInt(5, topK);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        ScoredChunk sc = new ScoredChunk(
+                                rs.getInt("id"),
+                                rs.getString("document_title"),
+                                rs.getString("section_title"),
+                                rs.getString("content")
+                        );
+                        sc.denseRankScore = rs.getDouble("similarity");
+                        results.add(sc);
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    /**
+     * Pure Sparse BM25 Search (for benchmark comparison).
+     */
+    public List<ScoredChunk> retrieveSparse(String queryText, int topK, AuthContext auth) throws Exception {
+        List<ScoredChunk> results = new ArrayList<>();
+
+        try (Connection conn = DriverManager.getConnection(DbConfig.getUrl(), DbConfig.getUser(), DbConfig.getPassword())) {
+            Array rolesArray = conn.createArrayOf("text", auth.userRoles().toArray(new String[0]));
+            String sql = """
+                SELECT c.id, c.document_title, c.section_title, c.content,
+                       ts_rank_cd(to_tsvector('english', c.content), plainto_tsquery('english', ?)) AS rank_score
+                  FROM document_chunks c
+                  JOIN documents d ON c.document_id = d.document_id AND c.document_version = d.version
+                 WHERE d.lifecycle_status = 'ACTIVE'
+                   AND d.tenant_id = ?
+                   AND d.allowed_roles && ?::text[]
+                   AND to_tsvector('english', c.content) @@ plainto_tsquery('english', ?)
+                 ORDER BY rank_score DESC
+                 LIMIT ?;
+            """;
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, queryText);
+                ps.setString(2, auth.tenantId());
+                ps.setArray(3, rolesArray);
+                ps.setString(4, queryText);
+                ps.setInt(5, topK);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        ScoredChunk sc = new ScoredChunk(
+                                rs.getInt("id"),
+                                rs.getString("document_title"),
+                                rs.getString("section_title"),
+                                rs.getString("content")
+                        );
+                        sc.sparseRankScore = rs.getDouble("rank_score");
+                        results.add(sc);
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    public String generateEmbedding(BedrockRuntimeClient bedrock, String text) throws Exception {
         ObjectNode requestBody = MAPPER.createObjectNode();
         requestBody.put("inputText", text);
         requestBody.put("dimensions", 1024);

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param (
     [Parameter(Position = 0)]
-    [ValidateSet('server', 'pipeline', 'console', 'status')]
+    [ValidateSet('server', 'pipeline', 'console', 'benchmark', 'status')]
     [string]$Action = 'server'
 )
 
@@ -81,17 +81,23 @@ try {
             Ensure-TunnelActive
 
             Write-Host "`n=== [1/2] Draining Parsing Queue via UniversalParserWorker ===" -ForegroundColor Cyan
-            .\gradlew.bat run "-PmainClass=com.aws.lab.UniversalParserWorker" --console=plain -q
+            cmd /c "gradlew.bat run -PmainClass=com.aws.lab.UniversalParserWorker --console=plain -q"
 
             Write-Host "`n=== [2/2] Draining Indexing Queue via SemanticIndexerWorker ===" -ForegroundColor Cyan
-            .\gradlew.bat run "-PmainClass=com.aws.lab.SemanticIndexerWorker" --console=plain -q
+            cmd /c "gradlew.bat run -PmainClass=com.aws.lab.SemanticIndexerWorker --console=plain -q"
 
             Write-Host "`n>>> Ingestion pipeline complete!" -ForegroundColor Green
         }
 
+        'benchmark' {
+            Ensure-TunnelActive
+            Write-Host "`n>>> Running DocLab Retrieval Benchmark & Two-Stage Cross-Encoder Evaluation..." -ForegroundColor Cyan
+            cmd /c "gradlew.bat run -PmainClass=com.aws.lab.RagBenchmarkEvaluator --console=plain"
+        }
+
         'console' {
             Ensure-TunnelActive
-            .\gradlew.bat run "-PmainClass=com.aws.lab.DocLabEngine" --console=plain -q
+            cmd /c "gradlew.bat run -PmainClass=com.aws.lab.DocLabEngine --console=plain -q"
         }
 
         'status' {

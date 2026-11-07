@@ -2,6 +2,7 @@ package com.aws.lab.config;
 
 import com.aws.lab.DbConfig;
 import com.aws.lab.HybridRetrievalService;
+import com.aws.lab.SageMakerRerankerService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -21,6 +22,9 @@ public class DocLabSpringConfig {
 
     @Value("${doclab.aws.region:us-east-1}")
     private String awsRegion;
+
+    @Value("${doclab.sagemaker.reranker-endpoint:bge-reranker-endpoint}")
+    private String rerankerEndpoint;
 
     @Bean
     public Region awsRegion() {
@@ -72,6 +76,11 @@ public class DocLabSpringConfig {
     @Bean
     public HybridRetrievalService hybridRetrievalService(Region region) {
         return new HybridRetrievalService(region);
+    }
+
+    @Bean
+    public SageMakerRerankerService sageMakerRerankerService(Region region) {
+        return new SageMakerRerankerService(rerankerEndpoint, region);
     }
 
     @Bean

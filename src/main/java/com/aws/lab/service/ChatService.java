@@ -1,6 +1,7 @@
 package com.aws.lab.service;
 
 import com.aws.lab.HybridRetrievalService;
+import com.aws.lab.SageMakerRerankerService;
 import com.aws.lab.dto.ChatRequest;
 import com.aws.lab.dto.ChatResponse;
 import org.slf4j.Logger;
@@ -17,9 +18,7 @@ import software.amazon.awssdk.services.bedrockruntime.model.*;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 @Service
 public class ChatService {
@@ -30,20 +29,29 @@ public class ChatService {
     private final BedrockRuntimeClient bedrockClient;
     private final BedrockRuntimeAsyncClient asyncClient;
     private final HybridRetrievalService retrievalService;
+    private final SageMakerRerankerService rerankerService;
     private final JedisPool jedisPool;
 
     @Value("${doclab.bedrock.model-id:amazon.nova-micro-v1:0}")
     private String modelId;
 
+    @Value("${doclab.sagemaker.enabled:true}")
+    private boolean rerankerEnabled;
+
+    @Value("${doclab.sagemaker.candidate-count:15}")
+    private int candidateCount;
+
     public ChatService(
             BedrockRuntimeClient bedrockClient,
             BedrockRuntimeAsyncClient asyncClient,
             HybridRetrievalService retrievalService,
+            SageMakerRerankerService rerankerService,
             JedisPool jedisPool
     ) {
         this.bedrockClient = bedrockClient;
         this.asyncClient = asyncClient;
         this.retrievalService = retrievalService;
+        this.rerankerService = rerankerService;
         this.jedisPool = jedisPool;
     }
 
@@ -56,6 +64,7 @@ public class ChatService {
         String sessionId = request.getEffectiveSessionId();
         String userQuery = request.query();
         int topK = request.getEffectiveTopK();
+        boolean shouldRerank = request.isRerankRequested(rerankerEnabled);
 
         // 1. Rate Limiting Check
         if (!checkRateLimit(sessionId, 15, 60)) {
@@ -69,8 +78,7 @@ public class ChatService {
         }
 
         // 2. Exact Match Answer Cache Check
-        String queryHash = hashQuery(userQuery);
-        String cacheKey = buildSecureCacheKey(tenantId, userRoles, userQuery);
+        String cacheKey = buildSecureCacheKey(tenantId, userRoles, userQuery, shouldRerank);
         String cachedAnswer = getFromCache(cacheKey);
 
         if (cachedAnswer != null) {
@@ -86,18 +94,13 @@ public class ChatService {
             return;
         }
 
-        // 3. Hybrid RRF Retrieval with RBAC Governance
-        List<HybridRetrievalService.ScoredChunk> chunks = Collections.emptyList();
-        try {
-            HybridRetrievalService.AuthContext auth = new HybridRetrievalService.AuthContext(
-                    tenantId != null ? tenantId : "engineering-dept",
-                    userRoles != null && !userRoles.isEmpty() ? userRoles : List.of("ENGINEERING"),
-                    "INTERNAL"
-            );
-            chunks = retrievalService.retrieve(userQuery, topK, auth);
-        } catch (Exception e) {
-            log.warn("[ChatService] Retrieval error: {}", e.getMessage());
-        }
+        // 3. Two-Stage Retrieval (RRF Candidate Recall + SageMaker Cross-Encoder Precision Reranking)
+        HybridRetrievalService.AuthContext auth = new HybridRetrievalService.AuthContext(
+                tenantId != null ? tenantId : "engineering-dept",
+                userRoles != null && !userRoles.isEmpty() ? userRoles : List.of("ENGINEERING"),
+                "INTERNAL"
+        );
+        List<HybridRetrievalService.ScoredChunk> chunks = retrieveAndRerank(userQuery, topK, shouldRerank, auth);
 
         // 4. Strict Guardrail: Prevent hallucination when zero authorized chunks are retrieved
         if (chunks.isEmpty()) {
@@ -136,9 +139,11 @@ public class ChatService {
 
         StringBuilder fullReply = new StringBuilder();
 
-        // Send sources header event before token generation
         List<String> sourceCitations = chunks.stream()
-                .map(c -> String.format("[%s | Section: %s]", c.documentTitle, c.sectionTitle))
+                .map(c -> String.format("[%s | Section: %s%s]",
+                        c.documentTitle,
+                        c.sectionTitle,
+                        c.rerankerScore > 0 ? String.format(" | Score: %.3f", c.rerankerScore) : ""))
                 .toList();
 
         try {
@@ -147,7 +152,7 @@ public class ChatService {
             log.warn("[ChatService] Client closed connection before sources sent");
         }
 
-        // 5. Asynchronous ConverseStream
+        // 6. Asynchronous ConverseStream
         ConverseStreamResponseHandler handler = ConverseStreamResponseHandler.builder()
                 .subscriber(ConverseStreamResponseHandler.Visitor.builder()
                         .onContentBlockDelta(event -> {
@@ -193,13 +198,13 @@ public class ChatService {
         String sessionId = request.getEffectiveSessionId();
         String userQuery = request.query();
         int topK = request.getEffectiveTopK();
+        boolean shouldRerank = request.isRerankRequested(rerankerEnabled);
 
         if (!checkRateLimit(sessionId, 15, 60)) {
             return new ChatResponse("[Rate Limit Exceeded] Too many requests.", false, 0, List.of());
         }
 
-        String queryHash = hashQuery(userQuery);
-        String cacheKey = buildSecureCacheKey(tenantId, userRoles, userQuery);
+        String cacheKey = buildSecureCacheKey(tenantId, userRoles, userQuery, shouldRerank);
         String cachedAnswer = getFromCache(cacheKey);
 
         if (cachedAnswer != null) {
@@ -207,17 +212,12 @@ public class ChatService {
             return new ChatResponse(cachedAnswer, true, System.currentTimeMillis() - start, List.of());
         }
 
-        List<HybridRetrievalService.ScoredChunk> chunks = Collections.emptyList();
-        try {
-            HybridRetrievalService.AuthContext auth = new HybridRetrievalService.AuthContext(
-                    tenantId != null ? tenantId : "engineering-dept",
-                    userRoles != null && !userRoles.isEmpty() ? userRoles : List.of("ENGINEERING"),
-                    "INTERNAL"
-            );
-            chunks = retrievalService.retrieve(userQuery, topK, auth);
-        } catch (Exception e) {
-            log.warn("[ChatService] Retrieval error: {}", e.getMessage());
-        }
+        HybridRetrievalService.AuthContext auth = new HybridRetrievalService.AuthContext(
+                tenantId != null ? tenantId : "engineering-dept",
+                userRoles != null && !userRoles.isEmpty() ? userRoles : List.of("ENGINEERING"),
+                "INTERNAL"
+        );
+        List<HybridRetrievalService.ScoredChunk> chunks = retrieveAndRerank(userQuery, topK, shouldRerank, auth);
 
         // Strict Guardrail: Prevent hallucination when zero authorized chunks are retrieved
         if (chunks.isEmpty()) {
@@ -254,12 +254,144 @@ public class ChatService {
         saveConversationTurn(historyKey, userQuery, assistantReply);
 
         List<String> sources = chunks.stream()
-                .map(c -> String.format("[%s | Section: %s]", c.documentTitle, c.sectionTitle))
+                .map(c -> String.format("[%s | Section: %s%s]",
+                        c.documentTitle,
+                        c.sectionTitle,
+                        c.rerankerScore > 0 ? String.format(" | Score: %.3f", c.rerankerScore) : ""))
                 .toList();
 
         long elapsed = System.currentTimeMillis() - start;
         log.info("[DocLab Reply ({}ms)]: {}", elapsed, assistantReply);
         return new ChatResponse(assistantReply, false, elapsed, sources);
+    }
+
+    /**
+     * Two-Stage Retrieval Logic:
+     * Stage 1: Reciprocal Rank Fusion (pgvector Cosine + BM25 tsvector) fetches candidate pool.
+     * Stage 2: Cross-Encoder Reranking via SageMaker (bge-reranker-base) scores candidates down to topK.
+     */
+    private List<HybridRetrievalService.ScoredChunk> retrieveAndRerank(
+            String query,
+            int topK,
+            boolean enableRerank,
+            HybridRetrievalService.AuthContext auth
+    ) {
+        try {
+            boolean shouldRerank = enableRerank && rerankerEnabled;
+            int candidatesToFetch = shouldRerank ? Math.max(candidateCount, topK * 3) : topK;
+
+            // Stage 1: Broad Candidate Recall via RRF
+            List<HybridRetrievalService.ScoredChunk> candidates = retrievalService.retrieve(query, candidatesToFetch, auth);
+            if (candidates.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            // Stage 2: Precision Cross-Encoder Reranking
+            if (shouldRerank && candidates.size() > 1) {
+                return rerankerService.rerankChunks(query, candidates, topK);
+            } else {
+                return candidates.subList(0, Math.min(topK, candidates.size()));
+            }
+        } catch (Exception e) {
+            log.warn("[ChatService] Retrieval pipeline error: {}", e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Retrieval Benchmark Comparison:
+     * Evaluates Pure Dense vs Pure Sparse vs Hybrid RRF vs Two-Stage Cross-Encoder Reranking.
+     */
+    public Map<String, Object> benchmarkRetrieval(String query, String tenantId, List<String> userRoles, int topK) {
+        HybridRetrievalService.AuthContext auth = new HybridRetrievalService.AuthContext(
+                tenantId != null ? tenantId : "engineering-dept",
+                userRoles != null && !userRoles.isEmpty() ? userRoles : List.of("ENGINEERING"),
+                "INTERNAL"
+        );
+
+        Map<String, Object> benchmark = new HashMap<>();
+        benchmark.put("query", query);
+        benchmark.put("topK", topK);
+
+        // 1. Pure Dense
+        long startDense = System.currentTimeMillis();
+        List<HybridRetrievalService.ScoredChunk> denseChunks;
+        try {
+            denseChunks = retrievalService.retrieveDense(query, topK, auth);
+        } catch (Exception e) {
+            denseChunks = List.of();
+        }
+        long denseDuration = System.currentTimeMillis() - startDense;
+
+        // 2. Pure Sparse
+        long startSparse = System.currentTimeMillis();
+        List<HybridRetrievalService.ScoredChunk> sparseChunks;
+        try {
+            sparseChunks = retrievalService.retrieveSparse(query, topK, auth);
+        } catch (Exception e) {
+            sparseChunks = List.of();
+        }
+        long sparseDuration = System.currentTimeMillis() - startSparse;
+
+        // 3. Hybrid RRF
+        long startRrf = System.currentTimeMillis();
+        List<HybridRetrievalService.ScoredChunk> rrfChunks;
+        try {
+            rrfChunks = retrievalService.retrieve(query, topK, auth);
+        } catch (Exception e) {
+            rrfChunks = List.of();
+        }
+        long rrfDuration = System.currentTimeMillis() - startRrf;
+
+        // 4. Two-Stage RRF + SageMaker Cross-Encoder Reranking
+        long startTwoStage = System.currentTimeMillis();
+        List<HybridRetrievalService.ScoredChunk> rerankedChunks;
+        try {
+            List<HybridRetrievalService.ScoredChunk> candidates = retrievalService.retrieve(query, candidateCount, auth);
+            rerankedChunks = rerankerService.rerankChunks(query, candidates, topK);
+        } catch (Exception e) {
+            rerankedChunks = List.of();
+        }
+        long twoStageDuration = System.currentTimeMillis() - startTwoStage;
+
+        benchmark.put("denseVector", Map.of(
+                "latencyMs", denseDuration,
+                "count", denseChunks.size(),
+                "chunks", formatChunksForBenchmark(denseChunks)
+        ));
+        benchmark.put("sparseBM25", Map.of(
+                "latencyMs", sparseDuration,
+                "count", sparseChunks.size(),
+                "chunks", formatChunksForBenchmark(sparseChunks)
+        ));
+        benchmark.put("hybridRRF", Map.of(
+                "latencyMs", rrfDuration,
+                "count", rrfChunks.size(),
+                "chunks", formatChunksForBenchmark(rrfChunks)
+        ));
+        benchmark.put("twoStageReranker", Map.of(
+                "latencyMs", twoStageDuration,
+                "count", rerankedChunks.size(),
+                "chunks", formatChunksForBenchmark(rerankedChunks)
+        ));
+
+        return benchmark;
+    }
+
+    private List<Map<String, Object>> formatChunksForBenchmark(List<HybridRetrievalService.ScoredChunk> chunks) {
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (HybridRetrievalService.ScoredChunk c : chunks) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("documentTitle", c.documentTitle);
+            map.put("sectionTitle", c.sectionTitle);
+            map.put("rrfScore", c.rrfScore);
+            map.put("rerankerScore", c.rerankerScore);
+            map.put("denseScore", c.denseRankScore);
+            map.put("sparseScore", c.sparseRankScore);
+            map.put("snippet", c.content.length() > 120 ? c.content.substring(0, 120) + "..." : c.content);
+            list.add(map);
+        }
+        return list;
     }
 
     private String buildAugmentedPrompt(String userQuery, List<HybridRetrievalService.ScoredChunk> chunks) {
@@ -269,8 +401,11 @@ public class ChatService {
             sb.append("Always cite the exact Document Title and Section Name when referencing facts.\n\n");
             sb.append("--- DOCUMENTATION CONTEXT ---\n");
             for (HybridRetrievalService.ScoredChunk c : chunks) {
-                sb.append(String.format("Source: [%s | Section: %s]\nContent: %s\n\n",
-                        c.documentTitle, c.sectionTitle, c.content));
+                sb.append(String.format("Source: [%s | Section: %s%s]\nContent: %s\n\n",
+                        c.documentTitle,
+                        c.sectionTitle,
+                        c.rerankerScore > 0 ? String.format(" | Relevance Score: %.4f", c.rerankerScore) : "",
+                        c.content));
             }
             sb.append("--- END OF CONTEXT ---\n\n");
         }
@@ -311,7 +446,7 @@ public class ChatService {
             return current <= maxRequests;
         } catch (Exception e) {
             log.warn("[Redis Warning] Rate limiter bypassed due to connection issue: {}", e.getMessage());
-            return true; // Fail-open
+            return true;
         }
     }
 
@@ -372,7 +507,7 @@ public class ChatService {
         }
     }
 
-    private String buildSecureCacheKey(String tenantId, List<String> userRoles, String userQuery) {
+    private String buildSecureCacheKey(String tenantId, List<String> userRoles, String userQuery, boolean rerankEnabled) {
         String tenant = (tenantId != null && !tenantId.isBlank()) ? tenantId : "default";
         List<String> sortedRoles = (userRoles != null && !userRoles.isEmpty())
                 ? new ArrayList<>(userRoles)
@@ -380,6 +515,7 @@ public class ChatService {
         Collections.sort(sortedRoles);
         String rolesKey = String.join(",", sortedRoles);
         String queryHash = hashQuery(userQuery);
-        return String.format("cache:ans:%s:%s:%s", tenant, hashQuery(rolesKey), queryHash);
+        String rerankTag = rerankEnabled ? "rerank" : "norerank";
+        return String.format("cache:ans:%s:%s:%s:%s", tenant, hashQuery(rolesKey), rerankTag, queryHash);
     }
 }

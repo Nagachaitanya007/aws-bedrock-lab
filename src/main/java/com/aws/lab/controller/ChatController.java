@@ -12,6 +12,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/chat")
@@ -67,6 +68,27 @@ public class ChatController {
         List<String> roles = parseRoles(userRolesHeader);
         ChatResponse response = chatService.askChat(tenantId, roles, request);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Retrieval Benchmark & Comparison Endpoint.
+     * Evaluates Pure Dense vs Pure Sparse vs Hybrid RRF vs Two-Stage Cross-Encoder Reranking side-by-side.
+     */
+    @PostMapping("/benchmark")
+    public ResponseEntity<Map<String, Object>> benchmarkRetrieval(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "engineering-dept") String tenantId,
+            @RequestHeader(value = "X-User-Roles", defaultValue = "ENGINEERING") String userRolesHeader,
+            @RequestBody ChatRequest request
+    ) {
+        log.info("[ChatController] Benchmark requested for query: '{}'", request.query());
+        List<String> roles = parseRoles(userRolesHeader);
+        Map<String, Object> result = chatService.benchmarkRetrieval(
+                request.query(),
+                tenantId,
+                roles,
+                request.getEffectiveTopK()
+        );
+        return ResponseEntity.ok(result);
     }
 
     private List<String> parseRoles(String header) {
