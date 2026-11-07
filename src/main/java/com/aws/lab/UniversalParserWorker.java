@@ -1,12 +1,13 @@
 package com.aws.lab;
 
 import com.aws.lab.DbConfig;
+import com.aws.lab.extractor.DocumentExtractor;
+import com.aws.lab.extractor.ExtractedChunk;
+import com.aws.lab.extractor.ExtractorFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.security.MessageDigest;
-import java.util.HexFormat;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -17,10 +18,12 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 
 public class UniversalParserWorker {
@@ -30,27 +33,47 @@ public class UniversalParserWorker {
     private static final String INDEXING_QUEUE_URL = System.getenv().getOrDefault("INDEXING_QUEUE_URL", "https://sqs.us-east-1.amazonaws.com/564956048142/doclab-indexing-queue");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public static void main(String[] args) {
-        System.out.println("[UniversalParserWorker] Worker started. Polling: " + PARSING_QUEUE_URL);
+    public static int drainQueue(S3Client s3, SqsClient sqs) {
+        return drainQueue(s3, sqs, 1);
+    }
 
-        S3Client s3 = S3Client.builder().region(REGION).build();
-        SqsClient sqs = SqsClient.builder().region(REGION).build();
-
-        try {
+    public static int drainQueue(S3Client s3, SqsClient sqs, int waitTimeSeconds) {
+        int totalProcessed = 0;
+        while (true) {
             ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
                     .queueUrl(PARSING_QUEUE_URL)
-                    .maxNumberOfMessages(1)
-                    .waitTimeSeconds(10)
+                    .maxNumberOfMessages(10)
+                    .waitTimeSeconds(waitTimeSeconds)
                     .build();
 
             List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
             if (messages.isEmpty()) {
-                System.out.println("[UniversalParserWorker] No messages in parsing queue.");
-                return;
+                break;
             }
 
             for (Message msg : messages) {
-                processMessage(s3, sqs, msg);
+                try {
+                    processMessage(s3, sqs, msg);
+                    totalProcessed++;
+                } catch (Exception e) {
+                    System.err.println("[UniversalParserWorker] Error processing message " + msg.messageId() + ": " + e.getMessage());
+                }
+            }
+        }
+        return totalProcessed;
+    }
+
+    public static void main(String[] args) {
+        System.out.println("[UniversalParserWorker] Worker started. Draining queue: " + PARSING_QUEUE_URL);
+
+        try (S3Client s3 = S3Client.builder().region(REGION).build();
+             SqsClient sqs = SqsClient.builder().region(REGION).build()) {
+
+            int processed = drainQueue(s3, sqs, 2);
+            if (processed == 0) {
+                System.out.println("[UniversalParserWorker] No messages in parsing queue.");
+            } else {
+                System.out.println("[UniversalParserWorker] Successfully processed and drained " + processed + " message(s).");
             }
         } catch (Exception e) {
             System.err.println("[UniversalParserWorker] Fatal error: " + e.getMessage());
@@ -59,7 +82,7 @@ public class UniversalParserWorker {
         }
     }
 
-    private static void processMessage(S3Client s3, SqsClient sqs, Message message) throws Exception {
+    public static void processMessage(S3Client s3, SqsClient sqs, Message message) throws Exception {
         System.out.println("[UniversalParserWorker] Processing message ID: " + message.messageId());
         JsonNode root = MAPPER.readTree(message.body());
 
@@ -67,6 +90,7 @@ public class UniversalParserWorker {
         int version = root.has("version") ? root.get("version").asInt() : 1;
         String docTitle = root.has("document_title") ? root.get("document_title").asText() : "Untitled";
         String docType = root.has("document_type") ? root.get("document_type").asText() : "GENERAL";
+        String sourceFormat = root.has("source_format") ? root.get("source_format").asText() : "UNKNOWN";
         String businessStatus = root.has("business_status") ? root.get("business_status").asText() : "APPROVED";
         String tenantId = root.has("tenant_id") ? root.get("tenant_id").asText() : "default";
         String ownerId = root.has("owner_id") ? root.get("owner_id").asText() : "system";
@@ -131,47 +155,53 @@ public class UniversalParserWorker {
             System.out.println("[UniversalParserWorker] Document registered in DB with status: PROCESSING");
         }
 
-        // 3. Parse Markdown into Intermediate Representation (IR)
-        String markdownText = new String(rawBytes, StandardCharsets.UTF_8);
+        // 3. Universal Extractor Selection (PDF, Word, Excel, JSON, Markdown/Text)
+        DocumentExtractor extractor = ExtractorFactory.getExtractor(sourceFormat, s3RawKey);
+        System.out.printf("[UniversalParserWorker] Parsing %s (%d bytes) using %s (format: %s)%n",
+                s3RawKey, rawBytes.length, extractor.getClass().getSimpleName(), sourceFormat);
+
+        List<ExtractedChunk> extractedChunks;
+        try {
+            extractedChunks = extractor.extract(rawBytes, s3RawKey);
+        } catch (Exception ex) {
+            System.err.println("[UniversalParserWorker] Extraction error for " + docId + ": " + ex.getMessage());
+            markDocumentFailed(docId, version, ex.getMessage());
+            // Delete poisoned message to prevent infinite retry loops
+            sqs.deleteMessage(DeleteMessageRequest.builder()
+                    .queueUrl(PARSING_QUEUE_URL)
+                    .receiptHandle(message.receiptHandle())
+                    .build());
+            return;
+        }
+
+        // 4. Build Canonical Intermediate Representation (IR)
         ObjectNode irRoot = MAPPER.createObjectNode();
         irRoot.put("document_id", docId);
         irRoot.put("version", version);
         irRoot.put("title", docTitle);
+        irRoot.put("source_format", sourceFormat);
         irRoot.put("content_hash", contentHash);
 
         ArrayNode chunksArray = irRoot.putArray("chunks");
-        String[] sections = markdownText.split("(?=## )");
         int chunkIndex = 0;
 
-        for (String section : sections) {
-            String trimmed = section.trim();
-            if (trimmed.isEmpty()) continue;
-
-            String sectionTitle = "Overview";
-            if (trimmed.startsWith("## ")) {
-                int firstLineEnd = trimmed.indexOf('\n');
-                if (firstLineEnd != -1) {
-                    sectionTitle = trimmed.substring(3, firstLineEnd).trim();
-                } else {
-                    sectionTitle = trimmed.substring(3).trim();
-                }
-            }
-
+        for (ExtractedChunk chunk : extractedChunks) {
             ObjectNode chunkNode = chunksArray.addObject();
             chunkNode.put("chunk_index", chunkIndex++);
-            chunkNode.put("section_title", sectionTitle);
-            chunkNode.put("content", trimmed);
+            chunkNode.put("section_title", chunk.sectionTitle());
+            chunkNode.put("content", chunk.content());
         }
 
-        // 4. Save Canonical IR to S3
+        // 5. Save Canonical IR to S3
         String irJson = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(irRoot);
         s3.putObject(
                 b -> b.bucket(s3Bucket).key(irKey),
                 RequestBody.fromString(irJson, StandardCharsets.UTF_8)
         );
-        System.out.println("[UniversalParserWorker] Canonical IR stored at s3://" + s3Bucket + "/" + irKey);
+        System.out.println("[UniversalParserWorker] Canonical IR stored at s3://" + s3Bucket + "/" + irKey
+                + " with " + chunkIndex + " chunks.");
 
-        // 5. Send Claim-Check message to Indexing Queue
+        // 6. Send Claim-Check message to Indexing Queue
         ObjectNode indexMsg = MAPPER.createObjectNode();
         indexMsg.put("document_id", docId);
         indexMsg.put("version", version);
@@ -188,11 +218,24 @@ public class UniversalParserWorker {
                 .build());
         System.out.println("[UniversalParserWorker] Forwarded claim check to Indexing Queue.");
 
-        // 6. Delete message from parsing queue
+        // 7. Delete message from parsing queue
         sqs.deleteMessage(DeleteMessageRequest.builder()
                 .queueUrl(PARSING_QUEUE_URL)
                 .receiptHandle(message.receiptHandle())
                 .build());
         System.out.println("[UniversalParserWorker] Parsed and enqueued successfully.");
+    }
+
+    private static void markDocumentFailed(String docId, int version, String errorReason) {
+        String sql = "UPDATE documents SET lifecycle_status = 'FAILED', updated_at = NOW() WHERE document_id = ? AND version = ?";
+        try (Connection conn = DriverManager.getConnection(DbConfig.getUrl(), DbConfig.getUser(), DbConfig.getPassword());
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, docId);
+            ps.setInt(2, version);
+            ps.executeUpdate();
+            System.err.println("[UniversalParserWorker] Marked " + docId + " as FAILED in database: " + errorReason);
+        } catch (Exception e) {
+            System.err.println("[UniversalParserWorker] Error updating failure status: " + e.getMessage());
+        }
     }
 }

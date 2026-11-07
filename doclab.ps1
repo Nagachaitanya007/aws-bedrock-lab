@@ -29,7 +29,7 @@ function Load-EnvFile {
         Write-Host ">>> Loaded environment variables from .env" -ForegroundColor DarkGray
     }
     else {
-        Write-Warning ".env file not found at $envPath. Ensure DOCLAB_DB_USER (or AEGIS_DB_USER) and password are set."
+        Write-Warning ".env file not found at $envPath. Ensure DOCLAB_DB_USER and password are set."
     }
 }
 
@@ -80,13 +80,10 @@ try {
         'pipeline' {
             Ensure-TunnelActive
 
-            Write-Host "`n=== [1/3] Uploading via DocumentProducer ===" -ForegroundColor Cyan
-            .\gradlew.bat run "-PmainClass=com.aws.lab.DocumentProducer" --console=plain -q
-
-            Write-Host "`n=== [2/3] Parsing via UniversalParserWorker ===" -ForegroundColor Cyan
+            Write-Host "`n=== [1/2] Draining Parsing Queue via UniversalParserWorker ===" -ForegroundColor Cyan
             .\gradlew.bat run "-PmainClass=com.aws.lab.UniversalParserWorker" --console=plain -q
 
-            Write-Host "`n=== [3/3] Indexing via SemanticIndexerWorker ===" -ForegroundColor Cyan
+            Write-Host "`n=== [2/2] Draining Indexing Queue via SemanticIndexerWorker ===" -ForegroundColor Cyan
             .\gradlew.bat run "-PmainClass=com.aws.lab.SemanticIndexerWorker" --console=plain -q
 
             Write-Host "`n>>> Ingestion pipeline complete!" -ForegroundColor Green

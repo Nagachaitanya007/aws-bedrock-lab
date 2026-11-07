@@ -39,28 +39,48 @@ public class SemanticIndexerWorker {
         String embeddingString;
     }
 
-    public static void main(String[] args) {
-        System.out.println("[SemanticIndexerWorker] Worker started. Polling: " + INDEXING_QUEUE_URL);
+    public static int drainQueue(S3Client s3, SqsClient sqs, BedrockRuntimeClient bedrock) {
+        return drainQueue(s3, sqs, bedrock, 1);
+    }
 
-        S3Client s3 = S3Client.builder().region(REGION).build();
-        SqsClient sqs = SqsClient.builder().region(REGION).build();
-        BedrockRuntimeClient bedrock = BedrockRuntimeClient.builder().region(REGION).build();
-
-        try {
+    public static int drainQueue(S3Client s3, SqsClient sqs, BedrockRuntimeClient bedrock, int waitTimeSeconds) {
+        int totalProcessed = 0;
+        while (true) {
             ReceiveMessageRequest receiveRequest = ReceiveMessageRequest.builder()
                     .queueUrl(INDEXING_QUEUE_URL)
-                    .maxNumberOfMessages(1)
-                    .waitTimeSeconds(10)
+                    .maxNumberOfMessages(10)
+                    .waitTimeSeconds(waitTimeSeconds)
                     .build();
 
             List<Message> messages = sqs.receiveMessage(receiveRequest).messages();
             if (messages.isEmpty()) {
-                System.out.println("[SemanticIndexerWorker] No messages in indexing queue.");
-                return;
+                break;
             }
 
             for (Message msg : messages) {
-                processMessage(s3, sqs, bedrock, msg);
+                try {
+                    processMessage(s3, sqs, bedrock, msg);
+                    totalProcessed++;
+                } catch (Exception e) {
+                    System.err.println("[SemanticIndexerWorker] Error processing message " + msg.messageId() + ": " + e.getMessage());
+                }
+            }
+        }
+        return totalProcessed;
+    }
+
+    public static void main(String[] args) {
+        System.out.println("[SemanticIndexerWorker] Worker started. Draining queue: " + INDEXING_QUEUE_URL);
+
+        try (S3Client s3 = S3Client.builder().region(REGION).build();
+             SqsClient sqs = SqsClient.builder().region(REGION).build();
+             BedrockRuntimeClient bedrock = BedrockRuntimeClient.builder().region(REGION).build()) {
+
+            int processed = drainQueue(s3, sqs, bedrock, 2);
+            if (processed == 0) {
+                System.out.println("[SemanticIndexerWorker] No messages in indexing queue.");
+            } else {
+                System.out.println("[SemanticIndexerWorker] Successfully processed and drained " + processed + " message(s).");
             }
         } catch (Exception e) {
             System.err.println("[SemanticIndexerWorker] Fatal error: " + e.getMessage());
@@ -69,7 +89,7 @@ public class SemanticIndexerWorker {
         }
     }
 
-    private static void processMessage(S3Client s3, SqsClient sqs, BedrockRuntimeClient bedrock, Message message) throws Exception {
+    public static void processMessage(S3Client s3, SqsClient sqs, BedrockRuntimeClient bedrock, Message message) throws Exception {
         System.out.println("[SemanticIndexerWorker] Processing message ID: " + message.messageId());
         JsonNode root = MAPPER.readTree(message.body());
 

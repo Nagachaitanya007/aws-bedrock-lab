@@ -38,6 +38,16 @@ dependencies {
     // JSON Processing
     implementation 'com.fasterxml.jackson.core:jackson-databind'
     implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+    // Universal Document Extractors (PDF, DOCX, XLSX) - 100% In-Memory, Zero Extra AWS Cost
+    implementation 'org.apache.pdfbox:pdfbox:3.0.2'
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+test {
+    useJUnitPlatform()
 }
 
 application {

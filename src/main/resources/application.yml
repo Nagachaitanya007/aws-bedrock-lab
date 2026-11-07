@@ -20,6 +20,9 @@ doclab:
   bedrock:
     model-id: ${BEDROCK_MODEL_ID:amazon.nova-micro-v1:0}
     embedding-model-id: ${BEDROCK_EMBEDDING_MODEL_ID:amazon.titan-embed-text-v2:0}
+  workers:
+    auto-enabled: ${DOCLAB_AUTO_WORKERS:true}
+    poll-interval-ms: ${DOCLAB_WORKER_POLL_INTERVAL_MS:3000}
 
 logging:
   level:

@@ -2,6 +2,7 @@ package com.aws.lab.controller;
 
 import com.aws.lab.dto.DocumentStatusResponse;
 import com.aws.lab.dto.DocumentUploadResponse;
+import com.aws.lab.service.BackgroundPipelineWorker;
 import com.aws.lab.service.DocumentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,14 +23,16 @@ public class DocumentController {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentController.class);
     private final DocumentService documentService;
+    private final BackgroundPipelineWorker backgroundPipelineWorker;
 
-    public DocumentController(DocumentService documentService) {
+    public DocumentController(DocumentService documentService, BackgroundPipelineWorker backgroundPipelineWorker) {
         this.documentService = documentService;
+        this.backgroundPipelineWorker = backgroundPipelineWorker;
     }
 
     /**
      * Universal Document Upload Endpoint.
-     * Accepts any document (PDF, Markdown, TXT, JSON, DOCX),
+     * Accepts any document (PDF, Markdown, TXT, JSON, DOCX, XLSX),
      * persists raw bytes to S3, and emits an SQS Claim-Check message.
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -82,6 +85,31 @@ public class DocumentController {
                     .body(new ErrorResponse("NOT_FOUND", "No document registered with ID: " + documentId));
         }
         return ResponseEntity.ok(status);
+    }
+
+    /**
+     * Background Pipeline Worker Status Endpoint.
+     */
+    @GetMapping("/workers/status")
+    public ResponseEntity<?> getWorkerStatus() {
+        return ResponseEntity.ok(backgroundPipelineWorker.getWorkerStatus());
+    }
+
+    /**
+     * Toggle Automatic Worker Mode (true = automatic, false = manual).
+     */
+    @PostMapping("/workers/toggle")
+    public ResponseEntity<?> toggleWorker(@RequestParam boolean autoEnabled) {
+        backgroundPipelineWorker.setAutoEnabled(autoEnabled);
+        return ResponseEntity.ok(backgroundPipelineWorker.getWorkerStatus());
+    }
+
+    /**
+     * Manually trigger an immediate queue drain (Universal Parser + Semantic Indexer).
+     */
+    @PostMapping("/workers/drain")
+    public ResponseEntity<?> drainWorkers() {
+        return ResponseEntity.ok(backgroundPipelineWorker.drainQueues("MANUAL_REST"));
     }
 
     private List<String> parseRoles(String raw) {

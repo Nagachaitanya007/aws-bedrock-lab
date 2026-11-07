@@ -1,0 +1,18 @@
+{
+  "checkout-service": {
+    "tier": "Tier-1",
+    "owner": "team-payments",
+    "database": "aurora-postgresql",
+    "sla": "99.99%",
+    "scaling_policy": "Target tracking CPU at 70%",
+    "dlq_alert": "Trigger PagerDuty if DLQ count exceeds 5"
+  },
+  "inventory-service": {
+    "tier": "Tier-2",
+    "owner": "team-supply",
+    "database": "dynamodb",
+    "sla": "99.9%",
+    "scaling_policy": "Provisioned with auto-scaling",
+    "dlq_alert": "Trigger Slack alert if DLQ count exceeds 20"
+  }
+}
